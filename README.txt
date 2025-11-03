@@ -1,0 +1,1 @@
+CODEMIND GIT 연동 테스트
