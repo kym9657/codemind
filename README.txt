@@ -1,7 +1,3 @@
-CODEMIND GIT 연동 테스트
-
-20251103 젠킨스 연동 테스트
-
 1. git hub Token 생성
 setting - personal access tokens - Tokens (classic) - Generate new token - Generate new token (classic)
 
@@ -35,3 +31,6 @@ Credential 설정 : 생성한 Credntial
 Brandches to build 설정 : */main
 
 Script Path : Repo 에 있는 스크립트 경로
+
+5. Jenkins GIT 설정
+Jenkins - Tools - git installations > Path go Git executable : C:\Program Files\Git\bin 입력
