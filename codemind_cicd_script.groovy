@@ -29,7 +29,7 @@ pipeline {
                 script {
                     try {
                         withCredentials([usernamePassword(credentialsId: 'codemind-base-auth', usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD')]) {
-                            def loginRes = sh(
+                            def loginRes = bat(
                                 script: """
                                     curl -c cookie -o /dev/null -s -w "%{http_code}" -d 'username=${USERNAME}&password=${PASSWORD}&REQUEST_KIND=API' ${env.CODEMIND_BASE_URL}/user/login/process -k
                                 """,
@@ -54,7 +54,7 @@ pipeline {
             steps {
                 script {
                     try {
-                        def validProjectRes = sh(
+                        def validProjectRes = bat(
                             script: """
                                 curl -b cookie -H 'Accept:application/json' -o /dev/null -s -w "%{http_code}" '${env.CODEMIND_BASE_URL}/api/project/${PROJECT_NAME}/info' -k
                             """,
@@ -93,7 +93,7 @@ pipeline {
                     """
                     
                     try {
-                        def statusCode = sh(
+                        def statusCode = bat(
                             script: startScript, 
                             returnStdout: true
                         ).trim()
@@ -123,7 +123,7 @@ pipeline {
 					
                         while (true) {
                             try {
-                                def data = sh(
+                                def data = bat(
                                     script: statusUrl, 
                                     returnStdout: true
                                 ).trim()
@@ -168,7 +168,7 @@ pipeline {
             steps {
                 script {
                     try {
-                        def response = sh(
+                        def response = bat(
                             script: """
                                 curl -b cookie -H 'Accept:application/json' '${env.CODEMIND_BASE_URL}/api/project/${PROJECT_NAME}/check-quality-result?sequence=${env.SEQUENCE}' -k
                             """,
