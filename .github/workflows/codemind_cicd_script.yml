@@ -1,0 +1,178 @@
+#---------------------------------------------------
+# Base Jenkines Pipeline Script for Codemind v4.5.8
+#---------------------------------------------------
+# 해당 script는 기본적인 세팅이 되어있는 프로젝트가 만들어졌다는 전제로 진행됩니다.
+# 프로젝트 설정은 소스 경로 지정 : git / 품질 조건 설정. 이외에는 자율적으로 설정하시면 됩니다.
+# Codemind 접근 url, id, password 는 github Actions secrets and variables 을 이용하여 설정해주시고
+# 이외의 프로젝트 식별자, 브랜치 이름, 커밋 id와 같은 경우에는 workflow 실행 시 지정합니다.
+
+name: Codemind Github Actions Base Script
+
+on:
+  workflow_dispatch:
+    inputs:
+      PROJECT_NAME:
+        description: '프로젝트 식별자를 입력하세요.'
+        required: true
+      BRANCH_NAME:
+        description: 'BRANCH NAME을 입력하세요.'
+        required: false
+      COMMIT_ID:
+        description: '분석을 시작할 commit id를 입력하세요.'
+        required: false
+
+jobs:
+  codemind-analysis:
+    name: Run Codemind
+    runs-on: self-hosted
+
+    defaults:
+      run:
+        shell: bash
+
+    env:
+      CODEMIND_BASE_URL: "https://${{ secrets.CODEMIND_HOST }}"
+      PROJECT_NAME: ${{ github.event.inputs.PROJECT_NAME }}
+      BRANCH_NAME: ${{ github.event.inputs.BRANCH_NAME }}
+      COMMIT_ID: ${{ github.event.inputs.COMMIT_ID }}
+      GIT_BIN_PATH_WIN: /c/Program Files/Git/bin
+
+    steps:
+      - name: 0. Set Bash (Git Bash) Path (Windows Only)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          echo "C:\Program Files\Git\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          echo "Workflow PATH modified to prioritize Git Bash."
+
+      - name: 1. Login
+        env:
+          USERNAME: ${{ secrets.CODEMIND_USERNAME }}
+          PASSWORD: ${{ secrets.CODEMIND_PASSWORD }}
+        run: |
+          echo "Attempting login to $CODEMIND_BASE_URL"
+
+          loginRes=$(curl -c cookie.txt -o /dev/null -s -w "%{http_code}" \
+            -d "username=$USERNAME&password=$PASSWORD&REQUEST_KIND=API" \
+            "$CODEMIND_BASE_URL/user/login/process" -k)
+          
+          echo "Authentication response from Codemind server: $loginRes"
+
+          if [ "$loginRes" != "200" ]; then
+            echo "LOGIN_FAIL: Unable to authenticate with Codemind server."
+            exit 1
+          fi
+
+      - name: 2. Check Valid Project
+        run: |
+          validProjectRes=$(curl -b cookie.txt -H 'Accept:application/json' -o /dev/null -s -w "%{http_code}" \
+            "$CODEMIND_BASE_URL/api/project/$PROJECT_NAME/info" -k)
+          
+          if [ "$validProjectRes" == "200" ]; then
+            echo "Project($PROJECT_NAME) is valid"
+          else
+            echo "Project($PROJECT_NAME) not valid. HTTP Status: $validProjectRes"
+            exit 1
+          fi
+
+      - name: 3. Code Analysis Request
+        run: |
+          queryParams="checkDuplicatedAnalysis=false&checkoutMode=HEAD"
+
+          if [ -n "$COMMIT_ID" ]; then
+            queryParams="$queryParams&revision=$COMMIT_ID"
+          fi
+          if [ -n "$BRANCH_NAME" ]; then
+            queryParams="$queryParams&branch=$BRANCH_NAME"
+          fi
+
+          fullUrl="$CODEMIND_BASE_URL/api/analysis/$PROJECT_NAME?$queryParams"
+          echo "Requesting analysis: $fullUrl"
+
+          statusCode=$(curl -o /dev/null -s -w '%{http_code}' -b cookie.txt -X POST \
+            "$fullUrl" -k)
+          
+          if [ "$statusCode" == "200" ]; then
+            echo "Response from starting analysis project ($PROJECT_NAME) was successful."
+          else
+            echo "Failed to start analysis project ($PROJECT_NAME). Status code: $statusCode"
+            exit 1
+          fi
+          
+          echo "Sleeping 5 seconds..."
+          sleep 5
+
+      - name: 4. Monitor Analysis Progress
+        timeout-minutes: 30
+        run: |
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            export PATH="$GIT_BIN_PATH_WIN:$PATH"
+          fi
+          
+          statusUrl="$CODEMIND_BASE_URL/api/project/$PROJECT_NAME/status"
+          echo "Monitoring status at: $statusUrl"
+          
+          while true; do
+            data=$(curl -b cookie.txt -H 'Accept:application/json' -s "$statusUrl" -k)
+          
+            if [ $? -ne 0 ]; then
+               echo "Error fetching status (curl failed). Retrying in 5s..."
+               sleep 5
+               continue
+            fi
+
+            status=$(echo "$data" | jq -re '.status')
+            sequence=$(echo "$data" | jq -re '.sequence')
+
+            echo "SEQUENCE=$sequence" >> $GITHUB_ENV
+          
+            timestamp=$(date --iso-8601=seconds --utc)
+            echo "[$timestamp] Received from Codemind, received status($status) ==="
+          
+            if [ "$status" == "success" ]; then
+              echo "======================= Codemind project($PROJECT_NAME) analysis succeeded =================="
+              break
+            elif [ "$status" == "stop" ]; then
+              echo "================ Codemind project($PROJECT_NAME) analysis stopped ==============="
+              echo "Analysis Stopped for project $PROJECT_NAME"
+              exit 1
+            elif [ "$status" == "fail" ]; then
+              echo "================ Codemind project($PROJECT_NAME) analysis failed ==============="
+              echo "Analysis failed for project $PROJECT_NAME"
+              exit 1
+            elif [ "$status" == "reserved" ]; then
+              echo "======================= Codemind project($PROJECT_NAME) reserved... =================="
+            else
+              echo "======================= Codemind project($PROJECT_NAME) analyzing... =================="
+            fi
+          
+            sleep 5
+          done
+
+      - name: 5. Analysis Quality Results
+        run: |
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            export PATH="$GIT_BIN_PATH_WIN:$PATH"
+          fi
+          
+          echo "Checking quality results for sequence: $SEQUENCE"
+          
+          response=$(curl -f -b cookie.txt -H 'Accept:application/json' -s \
+            "$CODEMIND_BASE_URL/api/project/$PROJECT_NAME/check-quality-result?sequence=$SEQUENCE" -k)
+          
+          if [ $? -ne 0 ]; then
+             echo "Error fetching quality results (curl failed)."
+             exit 1
+          fi
+          
+          echo "Quality analysis results for project ($PROJECT_NAME): $response"
+
+          result=$(echo "$response" | jq -re '.result')
+          weaknessCount=$(echo "$response" | jq -re '.weaknessCount')
+          
+          if [ "$result" != "true" ]; then
+            echo "Code quality check failed (weakness detected: $weaknessCount)"
+            exit 1
+          else
+            echo "Code quality check passed"
+          fi
