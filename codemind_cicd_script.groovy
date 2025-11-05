@@ -12,9 +12,7 @@ pipeline {
     agent any
 
     environment {
-        //CODEMIND_BASE_URL = "https://${env.CODEMIND_HOST}"
-		CODEMIND_BASE_URL = "https://121.65.25.90:10443"
-		
+        CODEMIND_BASE_URL = "https://${env.CODEMIND_HOST}"
     }
 
     parameters {
